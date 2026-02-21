@@ -39,7 +39,8 @@ import {
   ChevronRight,
   ExternalLink,
   AlertTriangle,
-  RefreshCw
+  RefreshCw,
+  Radar
 } from 'lucide-react';
 import { Message, Role, Attachment, ChatSession, Note, AppView, Language, ApiKeys, UserProfile } from './types';
 import { streamChatResponse, generateImage } from './services/geminiService';
@@ -51,6 +52,7 @@ import ImageModal from './components/ImageModal';
 import SearchSources from './components/SearchSources';
 import NotesView from './components/NotesView';
 import StudyView from './components/StudyView';
+import AcademicView from './components/AcademicView';
 import PlanWidget from './components/PlanWidget';
 import Toast from './components/Toast';
 import LandingPage from './components/LandingPage';
@@ -467,15 +469,31 @@ const App: React.FC = () => {
 
     try {
       const aiMessageId = (Date.now() + 1).toString();
+      const trimmedText = userMessage.text.trim();
       
-      const trimmedText = userMessage.text.trim().toLowerCase();
-      const imageRegex = /^(please\s+)?(draw|generate|create|make)\s+(an\s+|a\s+)?(image|picture|photo|painting|illustration)/i;
-      const chineseImageRegex = /^(画|生成|创作|制作).*(图|照片|海报|插画)/;
-      const isImageGenRequest = imageRegex.test(trimmedText) || chineseImageRegex.test(trimmedText);
+      // Extended detection logic for image generation requests
+      // 1. Explicit English: "Draw an image of...", "Generate a picture..."
+      const engImageRegex = /^(please\s+)?(draw|generate|create|make)\s+(an?|the)?\s*(image|picture|photo|painting|illustration|drawing|sketch|art)/i;
+      
+      // 2. Direct "Draw..." command (e.g., "Draw a cat", "Draw future library")
+      // Excludes abstract phrases like "Draw a conclusion"
+      const drawCommandRegex = /^(please\s+)?(draw)\s+(?!up\b|a conclusion|an inference).+/i;
+
+      // 3. Explicit Chinese: Starts with "画", "生成" etc. and contains "图", "照片" etc.
+      const cnImageRegex = /^(画|生成|创作|制作|绘制).*(图|照片|海报|插画|像)/;
+      
+      // 4. Mixed: "Draw" followed by Chinese characters (e.g., "Draw 一幅...")
+      const mixedRegex = /^(draw)\s+[\u4e00-\u9fa5]+/i;
+
+      const isImageGenRequest = engImageRegex.test(trimmedText) || 
+                                drawCommandRegex.test(trimmedText) || 
+                                cnImageRegex.test(trimmedText) || 
+                                mixedRegex.test(trimmedText);
 
       setMessages(prev => [...prev, { id: aiMessageId, role: Role.MODEL, text: '', timestamp: Date.now(), isStreaming: true }]);
 
-      if (isImageGenRequest && selectedModel === DEFAULT_MODEL) {
+      // If recognized as an image request, force usage of the image generation path regardless of selected model
+      if (isImageGenRequest) {
         setLoadingStatus("Generating image...");
         const imageMarkdown = await generateImage(userMessage.text);
         setMessages(prev => prev.map(msg => msg.id === aiMessageId ? { ...msg, text: imageMarkdown, isStreaming: false } : msg));
@@ -862,6 +880,13 @@ const App: React.FC = () => {
                     >
                       <Box size={16} strokeWidth={1.5} /> {t.lazybox}
                     </button>
+                    {/* Academic Module */}
+                    <button 
+                      onClick={() => setCurrentView('academic')}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${currentView === 'academic' ? 'bg-white text-gray-900 shadow-sm border border-gray-100' : 'text-gray-500 hover:bg-gray-200/50'}`}
+                    >
+                      <Radar size={16} strokeWidth={1.5} /> {t.academicTitle}
+                    </button>
                     {/* Study Module */}
                     <button 
                       onClick={() => setCurrentView('study')}
@@ -952,6 +977,13 @@ const App: React.FC = () => {
              language={language}
              apiKeys={apiKeys}
              userProfile={userProfile}
+           />
+        ) : currentView === 'academic' ? (
+           <AcademicView 
+             language={language}
+             apiKeys={apiKeys}
+             userProfile={userProfile}
+             onSaveNote={handleCreateNote}
            />
         ) : currentView === 'painting' ? (
             <div className="w-full h-full bg-white relative flex flex-col">

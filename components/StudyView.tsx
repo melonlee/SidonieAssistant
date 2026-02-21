@@ -27,9 +27,14 @@ import {
   Trash2,
   BrainCircuit,
   PenTool,
-  ChevronDown
+  ChevronDown,
+  Activity,
+  AlertCircle,
+  RefreshCw,
+  Brain,
+  Timer
 } from 'lucide-react';
-import { StudyState, StudyTopic, Message, Role, ApiKeys, UserProfile, Language, StudyActivity, SchoolNote, Course } from '../types';
+import { StudyState, StudyTopic, Message, Role, ApiKeys, UserProfile, Language, StudyActivity, SchoolNote, Course, TopicReviewData } from '../types';
 import { 
   DEFAULT_MATH_SYLLABUS, 
   STUDY_BADGES, 
@@ -99,7 +104,8 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
         stages: DEFAULT_MATH_SYLLABUS,
         createdAt: Date.now()
     }],
-    activeCourseId: 'default_math'
+    activeCourseId: 'default_math',
+    reviewData: {} // Initialize spaced repetition data
   });
 
   const [activeTopic, setActiveTopic] = useState<StudyTopic | null>(null);
@@ -115,6 +121,7 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
   const [currentContent, setCurrentContent] = useState<string>('');
   const [currentPlan, setCurrentPlan] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [hasGenerationError, setHasGenerationError] = useState(false);
   const [contentType, setContentType] = useState<'concept' | 'quiz' | 'visual'>('concept');
   
   // Chat State (For Concept Interaction)
@@ -169,6 +176,20 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
         }
         
         if (!parsed.schoolNotes) parsed.schoolNotes = [];
+        if (!parsed.reviewData) parsed.reviewData = {}; 
+
+        // Migration: Ensure Badges are up-to-date with new bilingual structure
+        // We preserve the 'unlocked' status from saved state, but use the definition from constants
+        if (parsed.badges) {
+           const updatedBadges = STUDY_BADGES.map(defaultBadge => {
+              const savedBadge = parsed.badges.find((b: any) => b.id === defaultBadge.id);
+              return savedBadge ? { ...defaultBadge, unlocked: savedBadge.unlocked } : defaultBadge;
+           });
+           parsed.badges = updatedBadges;
+        } else {
+           parsed.badges = STUDY_BADGES;
+        }
+        
         setStudyState(parsed);
       } catch (e) { 
         console.error("Failed to load study state, resetting to default.");
@@ -244,13 +265,10 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
 
           // Robust JSON Extraction
           let cleanJson = jsonString;
-          
-          // 1. Try to find markdown block first
           const markdownMatch = jsonString.match(/```json\s*([\s\S]*?)\s*```/);
           if (markdownMatch) {
               cleanJson = markdownMatch[1];
           } else {
-              // 2. Try to find start [ and end ]
               const start = jsonString.indexOf('[');
               const end = jsonString.lastIndexOf(']');
               if (start !== -1 && end !== -1 && end > start) {
@@ -444,6 +462,7 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
 
   const generateContent = async (topic: StudyTopic, type: 'concept' | 'quiz' | 'visual') => {
     setIsGenerating(true);
+    setHasGenerationError(false);
     setCurrentContent('');
     setCurrentPlan(null);
     setSessionMessages([]); // Reset chat for new card
@@ -453,9 +472,25 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
     setQuizSelectedOption(null);
     setQuizStatus('unanswered');
 
+    // Context for AI Spaced Repetition
+    const reviewStatus = studyState.reviewData?.[topic.id];
+    let reviewContext = "";
+    if (reviewStatus) {
+       const daysOverdue = (Date.now() - reviewStatus.nextReview) / (1000 * 60 * 60 * 24);
+       if (daysOverdue > 0) {
+          reviewContext = `Note: This is a Spaced Repetition REVIEW session. The student previously learned this but needs reinforcement.`;
+          if (reviewStatus.streak === 0) {
+             reviewContext += ` They struggled last time. Focus on clearing up common misconceptions and simpler examples first.`;
+          } else {
+             reviewContext += ` They were doing well. Challenge them slightly to deepen memory trace.`;
+          }
+       }
+    }
+
     const promptText = `
       Topic: "${topic.title[language === 'zh' ? 'zh' : 'en']}" (${topic.description[language === 'zh' ? 'zh' : 'en']}).
       Context: ${topic.promptKey}.
+      ${reviewContext}
       Task: Generate a ${type === 'concept' ? 'CONCEPT CARD' : type === 'quiz' ? 'QUIZ CARD' : 'INTERACTIVE VISUAL HTML'}.
       Language: ${language === 'zh' ? 'Chinese (Simplified)' : 'English'}.
       
@@ -519,6 +554,7 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
 
     } catch (e) {
       console.error(e);
+      setHasGenerationError(true);
       setCurrentContent("Error generating content. Please try again.");
     } finally {
       setIsGenerating(false);
@@ -584,6 +620,50 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
     }
   };
 
+  const calculateSpacedRepetition = (topicId: string, isCorrect: boolean): TopicReviewData => {
+     const currentData = studyState.reviewData?.[topicId] || {
+        topicId,
+        lastReviewed: 0,
+        nextReview: 0,
+        interval: 0,
+        easeFactor: 2.5,
+        streak: 0
+     };
+
+     let { interval, easeFactor, streak } = currentData;
+
+     if (isCorrect) {
+        // Simplified SM-2 Algorithm
+        if (streak === 0) {
+           interval = 1; // 1 day
+        } else if (streak === 1) {
+           interval = 3; // 3 days
+        } else {
+           interval = Math.round(interval * easeFactor);
+        }
+        streak += 1;
+        // Ease factor adjustment (boost slightly for success)
+        easeFactor = Math.min(easeFactor + 0.1, 5.0); 
+     } else {
+        // Reset on failure
+        streak = 0;
+        interval = 0; // Review immediately/tomorrow
+        // Penalty for failure
+        easeFactor = Math.max(easeFactor - 0.2, 1.3);
+     }
+
+     const nextReview = Date.now() + (interval * 24 * 60 * 60 * 1000);
+
+     return {
+        topicId,
+        lastReviewed: Date.now(),
+        nextReview,
+        interval,
+        easeFactor,
+        streak
+     };
+  };
+
   const handleQuizAnswer = (index: number) => {
     if (quizStatus !== 'unanswered') return;
     
@@ -598,7 +678,10 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
       setQuizStatus('incorrect');
     }
 
-    // Update the last activity log with the user's answer
+    // AI Spaced Repetition Logic
+    const reviewData = activeTopic ? calculateSpacedRepetition(activeTopic.id, isCorrect) : null;
+
+    // Update the last activity log with the user's answer & review data
     setStudyState(prev => {
         const newLog = [...prev.activityLog];
         // Find the most recent quiz for this topic
@@ -617,7 +700,17 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
                 score: isCorrect ? 100 : 0
             };
         }
-        return { ...prev, activityLog: newLog };
+
+        const updatedReviewData = { ...prev.reviewData };
+        if (reviewData) {
+           updatedReviewData[reviewData.topicId] = reviewData;
+        }
+
+        return { 
+           ...prev, 
+           activityLog: newLog,
+           reviewData: updatedReviewData
+        };
     });
   };
 
@@ -640,16 +733,20 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
 
   // --- Renderers ---
 
-  const getTopicStatus = (topicId: string): 'locked' | 'start' | 'in-progress' | 'mastered' => {
+  const getTopicStatus = (topicId: string): { status: 'locked' | 'start' | 'in-progress' | 'mastered', isReviewDue: boolean } => {
+    // Check if review is due
+    const reviewData = studyState.reviewData?.[topicId];
+    const isReviewDue = reviewData ? Date.now() >= reviewData.nextReview : false;
+
     // Check activity log for this topic
     const topicActivities = studyState.activityLog.filter(a => a.topicId === topicId);
-    if (topicActivities.length === 0) return 'start';
+    if (topicActivities.length === 0) return { status: 'start', isReviewDue: false };
     
     // Check if there is a quiz with 100% score
     const hasMastered = topicActivities.some(a => a.type === 'quiz' && a.score === 100);
-    if (hasMastered) return 'mastered';
     
-    return 'in-progress';
+    if (hasMastered) return { status: 'mastered', isReviewDue };
+    return { status: 'in-progress', isReviewDue };
   };
 
   const renderSession = () => {
@@ -715,6 +812,22 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
                     <div className="absolute inset-0 flex flex-col items-center justify-center bg-white z-10">
                        <Loader2 size={32} className="text-blue-500 animate-spin mb-4" />
                        <p className="text-gray-500 font-medium animate-pulse">{t.typing}</p>
+                    </div>
+                 ) : hasGenerationError ? (
+                    <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-center p-8">
+                        <div className="text-red-500 mb-4 bg-red-50 p-4 rounded-full">
+                            <AlertCircle size={32} />
+                        </div>
+                        <h3 className="text-gray-900 font-bold text-lg mb-2">Generation Failed</h3>
+                        <p className="text-gray-500 text-sm mb-6 max-w-md">
+                            We couldn't generate the learning content. This might be due to a connection issue or high traffic.
+                        </p>
+                        <button 
+                            onClick={() => generateContent(activeTopic, contentType)}
+                            className="flex items-center gap-2 px-6 py-2.5 bg-black text-white rounded-xl hover:bg-gray-800 transition-all font-medium shadow-lg shadow-gray-200"
+                        >
+                            <RefreshCw size={18} /> Retry Generation
+                        </button>
                     </div>
                  ) : (
                     <div className="p-8 flex-1">
@@ -791,7 +904,7 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
               </div>
 
               {/* Chat Interaction for Concept */}
-              {contentType === 'concept' && !isGenerating && (
+              {contentType === 'concept' && !isGenerating && !hasGenerationError && (
                  <div className="mt-8 pb-20">
                     <div className="flex items-center gap-2 mb-6">
                        <MessageSquare size={16} className="text-gray-400" />
@@ -1037,61 +1150,65 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
 
   const renderHomeworkView = () => (
     <div className="space-y-8 animate-fade-in">
-       {/* Header */}
-       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+       <div className="flex items-center justify-between">
           <div>
-             <h2 className="text-2xl font-bold text-gray-900">{t.schoolSync}</h2>
-             <p className="text-gray-500">{t.schoolSyncSubtitle}</p>
+             <h2 className="text-xl font-bold text-gray-900">{t.schoolSync}</h2>
+             <p className="text-gray-500 text-sm mt-1">{t.schoolSyncSubtitle}</p>
           </div>
           <button 
-            onClick={() => setIsCreatingNote(true)}
-            className="flex items-center gap-2 px-5 py-2.5 bg-black text-white rounded-xl shadow-lg shadow-black/10 hover:bg-gray-800 transition-all font-medium"
+             onClick={() => setIsCreatingNote(true)}
+             className="flex items-center gap-2 px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors shadow-sm font-medium text-sm"
           >
-             <Plus size={18} /> {t.addNote}
+             <Plus size={16} /> {t.addNote}
           </button>
        </div>
 
        {/* Creation Form */}
        {isCreatingNote && (
-          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 animate-fade-in-down">
-             <div className="flex justify-between items-center mb-4">
-                <h3 className="font-bold text-gray-800">{t.addNote}</h3>
-                <button onClick={() => setIsCreatingNote(false)} className="text-gray-400 hover:text-gray-600"><X size={18}/></button>
+          <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-lg animate-fade-in-down">
+             <div className="flex justify-between items-center mb-6">
+                <h3 className="font-bold text-lg text-gray-900">{t.addNote}</h3>
+                <button onClick={() => setIsCreatingNote(false)} className="text-gray-400 hover:text-gray-600">
+                   <X size={20} />
+                </button>
              </div>
              
-             <div className="space-y-4">
+             <div className="space-y-6">
                 <div>
-                   <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">{t.subject}</label>
+                   <label className="block text-sm font-bold text-gray-700 mb-2">{t.subject}</label>
                    <div className="flex gap-2 flex-wrap">
-                      {(['math', 'chinese', 'english', 'science', 'other'] as const).map(subj => (
-                        <button
-                           key={subj}
-                           onClick={() => setNewNoteSubject(subj)}
-                           className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all border
-                             ${newNoteSubject === subj 
-                               ? 'bg-black text-white border-black' 
-                               : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}
-                           `}
-                        >
-                           {t[subj]}
-                        </button>
+                      {['math', 'chinese', 'english', 'science', 'other'].map((subj) => (
+                         <button
+                            key={subj}
+                            onClick={() => setNewNoteSubject(subj as any)}
+                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${newNoteSubject === subj ? 'bg-black text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                         >
+                            {t[subj as keyof typeof t] || subj}
+                         </button>
                       ))}
                    </div>
                 </div>
 
                 <div>
-                   <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">{t.content}</label>
-                   <textarea
-                     value={newNoteContent}
-                     onChange={(e) => setNewNoteContent(e.target.value)}
-                     className="w-full p-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-100 min-h-[100px]"
-                     placeholder="Paste text from WeChat/WhatsApp here..."
+                   <label className="block text-sm font-bold text-gray-700 mb-2">{t.content}</label>
+                   <textarea 
+                      value={newNoteContent}
+                      onChange={(e) => setNewNoteContent(e.target.value)}
+                      className="w-full p-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-black focus:outline-none min-h-[120px] resize-none"
+                      placeholder="Paste teacher's message or type homework details..."
                    />
                 </div>
 
                 <div>
-                   <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">{t.uploadImages}</label>
-                   <div className="flex gap-3 overflow-x-auto pb-2">
+                   <label className="block text-sm font-bold text-gray-700 mb-2">{t.uploadImages}</label>
+                   <div className="flex items-center gap-4">
+                      <button 
+                         onClick={() => fileInputRef.current?.click()}
+                         className="w-24 h-24 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center text-gray-400 hover:border-black hover:text-black transition-colors"
+                      >
+                         <ImageIcon size={24} className="mb-1" />
+                         <span className="text-xs font-bold uppercase">Upload</span>
+                      </button>
                       <input 
                          type="file" 
                          ref={fileInputRef} 
@@ -1100,31 +1217,26 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
                          multiple 
                          onChange={handleImageUpload} 
                       />
-                      <button 
-                        onClick={() => fileInputRef.current?.click()}
-                        className="w-20 h-20 rounded-xl border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-500 transition-colors flex-shrink-0"
-                      >
-                         <ImageIcon size={24} />
-                      </button>
+                      
                       {newNoteImages.map((img, idx) => (
-                        <div key={idx} className="relative w-20 h-20 rounded-xl border border-gray-200 overflow-hidden flex-shrink-0 group">
-                           <img src={`data:image/png;base64,${img}`} className="w-full h-full object-cover" />
-                           <button 
-                             onClick={() => setNewNoteImages(prev => prev.filter((_, i) => i !== idx))}
-                             className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-                           >
-                              <X size={12} />
-                           </button>
-                        </div>
+                         <div key={idx} className="relative w-24 h-24 group">
+                            <img src={`data:image/png;base64,${img}`} className="w-full h-full object-cover rounded-xl border border-gray-200" />
+                            <button 
+                               onClick={() => setNewNoteImages(prev => prev.filter((_, i) => i !== idx))}
+                               className="absolute -top-2 -right-2 bg-white rounded-full p-1 shadow-md border border-gray-200 opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-500"
+                            >
+                               <X size={14} />
+                            </button>
+                         </div>
                       ))}
                    </div>
                 </div>
 
-                <div className="flex justify-end pt-2">
+                <div className="flex justify-end pt-4 border-t border-gray-100">
                    <button 
                       onClick={saveSchoolNote}
                       disabled={!newNoteContent && newNoteImages.length === 0}
-                      className="px-6 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      className="px-6 py-2.5 bg-black text-white rounded-xl hover:bg-gray-800 transition-colors font-bold disabled:opacity-50 disabled:cursor-not-allowed"
                    >
                       {t.save}
                    </button>
@@ -1133,61 +1245,62 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
           </div>
        )}
 
-       {/* Notes Timeline */}
-       <div className="space-y-4">
-          {studyState.schoolNotes.length === 0 ? (
-             <div className="flex flex-col items-center justify-center h-64 text-gray-400 text-center border-2 border-dashed border-gray-100 rounded-2xl bg-gray-50/50">
-                <Backpack size={48} className="mb-4 opacity-20" />
+       {/* Notes Grid */}
+       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {studyState.schoolNotes.length === 0 && !isCreatingNote ? (
+             <div className="col-span-full py-16 text-center text-gray-400 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                <Backpack size={48} className="mx-auto mb-4 opacity-20" />
                 <p>{t.noNotesLogged}</p>
              </div>
           ) : (
              studyState.schoolNotes.map(note => (
-               <div 
-                 key={note.id} 
-                 onClick={() => setSelectedSchoolNote(note)}
-                 className="group bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all cursor-pointer flex gap-4"
-               >
-                  {/* Icon Column */}
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 text-xl font-bold
-                    ${note.subject === 'math' ? 'bg-blue-100 text-blue-600' : 
-                      note.subject === 'chinese' ? 'bg-red-100 text-red-600' :
-                      note.subject === 'english' ? 'bg-purple-100 text-purple-600' :
-                      'bg-gray-100 text-gray-500'}
-                  `}>
-                     {note.subject === 'math' ? '∑' : note.subject === 'chinese' ? '文' : note.subject === 'english' ? 'Aa' : '?'}
-                  </div>
-
-                  {/* Content Column */}
-                  <div className="flex-1 min-w-0">
-                     <div className="flex justify-between items-start mb-2">
-                        <span className="text-sm font-bold text-gray-900 capitalize">{t[note.subject] || note.subject}</span>
-                        <span className="text-xs text-gray-400">{new Date(note.timestamp).toLocaleDateString()}</span>
-                     </div>
-                     <p className="text-gray-600 text-sm line-clamp-2 mb-3">{note.content || "Image only note"}</p>
-                     
-                     <div className="flex items-center gap-3">
-                        {note.images.length > 0 && (
-                           <div className="flex items-center gap-1 text-xs text-gray-500 bg-gray-50 px-2 py-1 rounded border border-gray-100">
-                              <ImageIcon size={12} /> {note.images.length}
-                           </div>
-                        )}
-                        {note.aiAnalysis && (
-                           <div className="flex items-center gap-1 text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded border border-blue-100">
-                              <BrainCircuit size={12} /> Analyzed
-                           </div>
-                        )}
-                        {note.aiPractice && (
-                           <div className="flex items-center gap-1 text-xs text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">
-                              <PenTool size={12} /> Practice
-                           </div>
-                        )}
-                     </div>
-                  </div>
-
-                  <div className="flex items-center text-gray-300 group-hover:text-blue-500 transition-colors">
-                     <ChevronRight size={20} />
-                  </div>
-               </div>
+                <div 
+                   key={note.id}
+                   onClick={() => setSelectedSchoolNote(note)}
+                   className="group bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:border-gray-200 transition-all cursor-pointer flex flex-col h-[280px]"
+                >
+                   <div className="flex justify-between items-start mb-4">
+                      <div className={`px-2.5 py-1 rounded-md text-xs font-bold uppercase tracking-wider
+                         ${note.subject === 'math' ? 'bg-blue-100 text-blue-700' : 
+                           note.subject === 'chinese' ? 'bg-red-100 text-red-700' :
+                           note.subject === 'english' ? 'bg-purple-100 text-purple-700' :
+                           'bg-gray-100 text-gray-700'}
+                      `}>
+                         {t[note.subject] || note.subject}
+                      </div>
+                      <span className="text-gray-400 text-xs font-medium">{new Date(note.timestamp).toLocaleDateString()}</span>
+                   </div>
+                   
+                   <p className="text-gray-800 text-sm leading-relaxed line-clamp-4 mb-4 flex-1">
+                      {note.content}
+                   </p>
+                   
+                   {note.images.length > 0 && (
+                      <div className="flex gap-2 overflow-hidden mb-4 h-16">
+                         {note.images.slice(0, 3).map((img, idx) => (
+                            <img key={idx} src={`data:image/png;base64,${img}`} className="h-full w-auto rounded-lg border border-gray-100" />
+                         ))}
+                         {note.images.length > 3 && (
+                            <div className="h-full w-16 bg-gray-50 rounded-lg border border-gray-100 flex items-center justify-center text-gray-400 text-xs font-bold">
+                               +{note.images.length - 3}
+                            </div>
+                         )}
+                      </div>
+                   )}
+                   
+                   <div className="flex items-center justify-between pt-4 border-t border-gray-50 mt-auto">
+                      <div className="flex gap-2">
+                         {note.aiAnalysis && <div className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded font-bold border border-blue-100 flex items-center gap-1"><Sparkles size={10} /> Analysis</div>}
+                         {note.aiPractice && <div className="text-[10px] bg-green-50 text-green-600 px-2 py-0.5 rounded font-bold border border-green-100 flex items-center gap-1"><CheckCircle2 size={10} /> Practice</div>}
+                      </div>
+                      <button 
+                         onClick={(e) => { e.stopPropagation(); deleteSchoolNote(note.id); }}
+                         className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                      >
+                         <Trash2 size={16} />
+                      </button>
+                   </div>
+                </div>
              ))
           )}
        </div>
@@ -1253,28 +1366,48 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
     }
 
     return (
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden animate-fade-in">
-        <div className="flex items-center justify-between p-4 border-b border-slate-200">
-           <h2 className="text-lg font-semibold text-slate-700 flex items-center gap-2">
-             <CalendarIcon size={18} /> {monthName} {year}
-           </h2>
-           <div className="flex gap-2">
-             <button onClick={() => setCalendarDate(new Date(year, month - 1, 1))} className="p-1 hover:bg-slate-100 rounded-full text-slate-500">
-               <ChevronLeft size={20} />
-             </button>
-             <button onClick={() => setCalendarDate(new Date())} className="text-sm px-3 py-1 bg-slate-100 rounded-md font-medium text-slate-600 hover:bg-slate-200">{t.today}</button>
-             <button onClick={() => setCalendarDate(new Date(year, month + 1, 1))} className="p-1 hover:bg-slate-100 rounded-full text-slate-500">
-               <ChevronRight size={20} />
-             </button>
-           </div>
+      <div className="space-y-6 animate-fade-in">
+        {/* Achievements Section */}
+        <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm">
+            <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+                <Trophy className="text-yellow-500" size={20} /> Achievements
+            </h2>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                {studyState.badges.map(badge => (
+                    <div key={badge.id} className={`p-4 rounded-xl border flex flex-col items-center text-center transition-all ${badge.unlocked ? 'bg-yellow-50/50 border-yellow-200 shadow-sm' : 'bg-gray-50 border-gray-100 opacity-60 grayscale'}`}>
+                        <div className="text-3xl mb-2">{badge.icon}</div>
+                        <div className="font-bold text-sm text-gray-800">{badge.name[language === 'zh' ? 'zh' : 'en']}</div>
+                        <div className="text-[10px] text-gray-500 mt-1">{badge.description[language === 'zh' ? 'zh' : 'en']}</div>
+                        {!badge.unlocked && <div className="mt-2 text-[10px] bg-gray-200 px-2 py-0.5 rounded text-gray-600 font-medium">Locked</div>}
+                    </div>
+                ))}
+            </div>
         </div>
-        <div className="grid grid-cols-7 text-center border-b border-slate-200 bg-slate-50">
-          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-            <div key={day} className="py-2 text-xs font-semibold text-slate-400 uppercase">{day}</div>
-          ))}
-        </div>
-        <div className="grid grid-cols-7 bg-white">
-          {days}
+
+        {/* Calendar Card */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between p-4 border-b border-slate-200">
+             <h2 className="text-lg font-semibold text-slate-700 flex items-center gap-2">
+               <CalendarIcon size={18} /> {monthName} {year}
+             </h2>
+             <div className="flex gap-2">
+               <button onClick={() => setCalendarDate(new Date(year, month - 1, 1))} className="p-1 hover:bg-slate-100 rounded-full text-slate-500">
+                 <ChevronLeft size={20} />
+               </button>
+               <button onClick={() => setCalendarDate(new Date())} className="text-sm px-3 py-1 bg-slate-100 rounded-md font-medium text-slate-600 hover:bg-slate-200">{t.today}</button>
+               <button onClick={() => setCalendarDate(new Date(year, month + 1, 1))} className="p-1 hover:bg-slate-100 rounded-full text-slate-500">
+                 <ChevronRight size={20} />
+               </button>
+             </div>
+          </div>
+          <div className="grid grid-cols-7 text-center border-b border-slate-200 bg-slate-50">
+            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+              <div key={day} className="py-2 text-xs font-semibold text-slate-400 uppercase">{day}</div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 bg-white">
+            {days}
+          </div>
         </div>
       </div>
     );
@@ -1380,7 +1513,7 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
        {/* Map Render */}
        {activeCourse.stages.map((stage) => {
           const topicStatuses = stage.topics.map(t => getTopicStatus(t.id));
-          const completedCount = topicStatuses.filter(s => s === 'mastered').length;
+          const completedCount = topicStatuses.filter(s => s.status === 'mastered').length;
           const progress = Math.round((completedCount / stage.topics.length) * 100);
 
           return (
@@ -1400,7 +1533,7 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
                
                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                   {stage.topics.map((topic) => {
-                     const status = getTopicStatus(topic.id);
+                     const { status, isReviewDue } = getTopicStatus(topic.id);
                      const isMastered = status === 'mastered';
                      const isInProgress = status === 'in-progress';
                      
@@ -1409,17 +1542,18 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
                           key={topic.id}
                           onClick={() => startTopic(topic)}
                           className={`group relative p-6 bg-white rounded-2xl border transition-all text-left flex flex-col h-full
-                            ${isMastered ? 'border-green-200 bg-green-50/10' : isInProgress ? 'border-blue-200 bg-blue-50/10' : 'border-gray-100 shadow-sm hover:shadow-md hover:border-blue-100'}
+                            ${isReviewDue ? 'border-amber-200 ring-2 ring-amber-100' : isMastered ? 'border-green-200 bg-green-50/10' : isInProgress ? 'border-blue-200 bg-blue-50/10' : 'border-gray-100 shadow-sm hover:shadow-md hover:border-blue-100'}
                           `}
                        >
                           <div className="mb-4 flex justify-between items-start">
                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors
-                                ${isMastered ? 'bg-green-100 text-green-600' : isInProgress ? 'bg-blue-100 text-blue-600' : 'bg-gray-50 text-gray-400 group-hover:bg-blue-50 group-hover:text-blue-600'}
+                                ${isReviewDue ? 'bg-amber-100 text-amber-600' : isMastered ? 'bg-green-100 text-green-600' : isInProgress ? 'bg-blue-100 text-blue-600' : 'bg-gray-50 text-gray-400 group-hover:bg-blue-50 group-hover:text-blue-600'}
                              `}>
-                                {isMastered ? <Star size={20} fill="currentColor" /> : <BookOpen size={20} />}
+                                {isReviewDue ? <Timer size={20} className="animate-pulse" /> : isMastered ? <Star size={20} fill="currentColor" /> : <BookOpen size={20} />}
                              </div>
-                             {isMastered && <div className="px-2 py-1 bg-green-100 text-green-700 text-[10px] font-bold uppercase tracking-wider rounded-md">{t.mastered}</div>}
-                             {isInProgress && <div className="px-2 py-1 bg-blue-100 text-blue-700 text-[10px] font-bold uppercase tracking-wider rounded-md">{t.continueLearning}</div>}
+                             {isReviewDue && <div className="px-2 py-1 bg-amber-100 text-amber-700 text-[10px] font-bold uppercase tracking-wider rounded-md animate-pulse">Review Due</div>}
+                             {!isReviewDue && isMastered && <div className="px-2 py-1 bg-green-100 text-green-700 text-[10px] font-bold uppercase tracking-wider rounded-md">{t.mastered}</div>}
+                             {!isReviewDue && isInProgress && <div className="px-2 py-1 bg-blue-100 text-blue-700 text-[10px] font-bold uppercase tracking-wider rounded-md">{t.continueLearning}</div>}
                           </div>
                           <h3 className="font-bold text-lg text-gray-900 mb-2 group-hover:text-blue-600 transition-colors">
                              {topic.title[language === 'zh' ? 'zh' : 'en'] || topic.title['en']}
@@ -1429,9 +1563,9 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
                           </p>
                           
                           <div className={`mt-4 flex items-center text-xs font-bold uppercase tracking-wider transition-colors
-                             ${isMastered ? 'text-green-600' : isInProgress ? 'text-blue-600' : 'text-gray-300 group-hover:text-blue-500'}
+                             ${isReviewDue ? 'text-amber-600' : isMastered ? 'text-green-600' : isInProgress ? 'text-blue-600' : 'text-gray-300 group-hover:text-blue-500'}
                           `}>
-                             {isMastered ? 'Review' : isInProgress ? 'Continue' : 'Start'} <ChevronRight size={12} className="ml-1" />
+                             {isReviewDue ? 'Review Now' : isMastered ? 'Review' : isInProgress ? 'Continue' : 'Start'} <ChevronRight size={12} className="ml-1" />
                           </div>
                        </button>
                      );
@@ -1462,6 +1596,16 @@ const StudyView: React.FC<StudyViewProps> = ({ language, apiKeys, userProfile })
                       <h1 className="text-3xl font-bold text-gray-900 tracking-tight">{t.studySubtitle}</h1>
                    </div>
                    <div className="flex gap-4">
+                       {/* Spaced Repetition Stats */}
+                       <div className="p-4 bg-white rounded-2xl border border-gray-100 shadow-sm text-center min-w-[100px] flex flex-col justify-center">
+                          <div className="text-2xl font-bold text-gray-900 mb-1 flex justify-center items-center gap-1">
+                             {Object.values(studyState.reviewData || {}).filter((d: TopicReviewData) => Date.now() >= d.nextReview).length}
+                          </div>
+                          <div className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center justify-center gap-1">
+                             <Brain size={12} /> Reviews Due
+                          </div>
+                       </div>
+
                        <div className="p-4 bg-white rounded-2xl border border-gray-100 shadow-sm text-center min-w-[100px]">
                           <div className="text-2xl font-bold text-gray-900 mb-1">{studyState.xp}</div>
                           <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">{t.xp}</div>

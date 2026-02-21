@@ -233,11 +233,46 @@ export const DEFAULT_MATH_SYLLABUS = [
 ];
 
 export const STUDY_BADGES = [
-  { id: 'badge_start', name: 'Explorer', description: 'Started your first session.', icon: '🧭', unlocked: false, condition: 'Start learning' },
-  { id: 'badge_quiz_master', name: 'Quiz Whiz', description: 'Scored 100% on a quiz.', icon: '💯', unlocked: false, condition: 'Perfect Score' },
-  { id: 'badge_week_streak', name: 'Consistent', description: 'Learned for 3 days in a row.', icon: '🔥', unlocked: false, condition: '3 Day Streak' },
-  { id: 'badge_geometry', name: 'Architect', description: 'Studied 5 Geometry topics.', icon: '📐', unlocked: false, condition: '5 Geo Topics' },
-  { id: 'badge_calc', name: 'Newton', description: 'Studied 5 Calculus topics.', icon: '🍎', unlocked: false, condition: '5 Calc Topics' },
+  { 
+    id: 'badge_start', 
+    name: { en: 'Explorer', zh: '探索者' }, 
+    description: { en: 'Started your first session.', zh: '开始了第一次学习会话。' }, 
+    icon: '🧭', 
+    unlocked: false, 
+    condition: { en: 'Start learning', zh: '开始学习' } 
+  },
+  { 
+    id: 'badge_quiz_master', 
+    name: { en: 'Quiz Whiz', zh: '答题高手' }, 
+    description: { en: 'Scored 100% on a quiz.', zh: '在测验中获得 100 分。' }, 
+    icon: '💯', 
+    unlocked: false, 
+    condition: { en: 'Perfect Score', zh: '满分通关' } 
+  },
+  { 
+    id: 'badge_week_streak', 
+    name: { en: 'Consistent', zh: '持之以恒' }, 
+    description: { en: 'Learned for 3 days in a row.', zh: '连续学习 3 天。' }, 
+    icon: '🔥', 
+    unlocked: false, 
+    condition: { en: '3 Day Streak', zh: '3天连胜' } 
+  },
+  { 
+    id: 'badge_geometry', 
+    name: { en: 'Architect', zh: '几何大师' }, 
+    description: { en: 'Studied 5 Geometry topics.', zh: '学习了 5 个几何主题。' }, 
+    icon: '📐', 
+    unlocked: false, 
+    condition: { en: '5 Geo Topics', zh: '5个几何' } 
+  },
+  { 
+    id: 'badge_calc', 
+    name: { en: 'Newton', zh: '牛顿转世' }, 
+    description: { en: 'Studied 5 Calculus topics.', zh: '学习了 5 个微积分主题。' }, 
+    icon: '🍎', 
+    unlocked: false, 
+    condition: { en: '5 Calc Topics', zh: '5个微积分' } 
+  },
 ];
 
 export const TRANSLATIONS = {
@@ -397,6 +432,18 @@ export const TRANSLATIONS = {
     switchCourse: "Switch Course",
     enterSubject: "e.g. History, Physics, Coding",
     enterGrade: "e.g. Grade 10, Year 5",
+    // Academic / Paper Radar
+    academicTitle: "Paper Radar",
+    academicSubtitle: "Discover and analyze the latest research from arXiv",
+    searchPapers: "Search papers (e.g. LLM, Agents, Vision)...",
+    analyzingPaper: "Reading & Translating...",
+    viewPdf: "View PDF",
+    deepRead: "AI Deep Read",
+    translation: "AI Translation & Summary",
+    originalAbstract: "Original Abstract",
+    published: "Published",
+    authors: "Authors",
+    categories: "Categories",
   },
   zh: {
     newTask: "新对话",
@@ -553,5 +600,17 @@ export const TRANSLATIONS = {
     switchCourse: "切换课程",
     enterSubject: "例如：历史，物理，Python编程",
     enterGrade: "例如：五年级，初二",
+    // Academic / Paper Radar
+    academicTitle: "学术雷达",
+    academicSubtitle: "发现 arXiv 最新前沿论文",
+    searchPapers: "搜索论文关键词 (例如 LLM, Agent, Vision)...",
+    analyzingPaper: "正在深度阅读并翻译...",
+    viewPdf: "查看 PDF",
+    deepRead: "AI 深度解读",
+    translation: "AI 翻译与摘要",
+    originalAbstract: "原文摘要",
+    published: "发表于",
+    authors: "作者",
+    categories: "分类",
   }
 };

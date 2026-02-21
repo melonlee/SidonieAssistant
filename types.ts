@@ -88,11 +88,11 @@ export interface Course {
 
 export interface Badge {
   id: string;
-  name: string;
-  description: string;
+  name: { zh: string; en: string };
+  description: { zh: string; en: string };
   icon: string; // Emoji or icon name
   unlocked: boolean;
-  condition: string; // Description of how to unlock
+  condition: { zh: string; en: string };
 }
 
 export interface StudyActivity {
@@ -117,6 +117,15 @@ export interface SchoolNote {
   aiPractice?: string; // Saved generated questions
 }
 
+export interface TopicReviewData {
+  topicId: string;
+  lastReviewed: number; // timestamp
+  nextReview: number; // timestamp
+  interval: number; // current interval in days
+  easeFactor: number; // SM-2 ease factor (default 2.5)
+  streak: number; // consecutive correct answers
+}
+
 export interface StudyState {
   xp: number;
   level: number;
@@ -125,7 +134,20 @@ export interface StudyState {
   schoolNotes: SchoolNote[]; // Daily teacher notes
   courses: Course[]; // Custom generated curriculums
   activeCourseId: string; // Currently selected course
+  reviewData: Record<string, TopicReviewData>; // Map of topicId to review status
 }
 
-export type AppView = 'chat' | 'notes' | 'painting' | 'study';
+// --- Academic Module Types ---
+export interface Paper {
+  id: string;
+  title: string;
+  summary: string;
+  authors: string[];
+  published: string;
+  link: string;
+  pdfLink: string;
+  category: string;
+}
+
+export type AppView = 'chat' | 'notes' | 'painting' | 'study' | 'academic';
 export type Language = 'en' | 'zh';
