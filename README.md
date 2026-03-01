@@ -8,20 +8,15 @@ Sidonie is named after my wife and inspired by our little one, Dua. Their everyd
 
 ### Screenshots
 
-| [Homepage](docs/screenshots/homepage.png) | [Chat task planning](docs/screenshots/chat-planning.png) |
-| :---: | :---: |
-| **Homepage** — Chat entry, model selection, quick actions | **Chat task planning** — Execution plan for complex requests (e.g. financial analysis) |
-| [Paper Radar](docs/screenshots/paper-radar.png) | [Help Child](docs/screenshots/help-child.png) |
-| **Paper Radar** — Discover & analyze arXiv research, daily briefing | **Help Child** — AI teaching assistant, curriculum & progress |
+<p align="center">
+  <img src="docs/screenshots/homepage.png" width="32%" alt="Homepage" />
+  <img src="docs/screenshots/paper-radar.png" width="32%" alt="Paper Radar" />
+  <img src="docs/screenshots/help-child.png" width="32%" alt="Help Child" />
+</p>
 
-<p align="center">
-  <img src="docs/screenshots/homepage.png" width="48%" alt="Homepage" />
-  <img src="docs/screenshots/chat-planning.png" width="48%" alt="Chat task planning" />
-</p>
-<p align="center">
-  <img src="docs/screenshots/paper-radar.png" width="48%" alt="Paper Radar" />
-  <img src="docs/screenshots/help-child.png" width="48%" alt="Help Child" />
-</p>
+| Homepage | Paper Radar | Help Child |
+| :---: | :---: | :---: |
+| Chat entry, model selection | Discover & analyze arXiv, daily briefing | AI teaching assistant, curriculum |
 
 ## 1. Project Overview
 
