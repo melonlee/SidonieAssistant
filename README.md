@@ -9,14 +9,25 @@ Sidonie is named after my wife and inspired by our little one, Dua. Their everyd
 ### Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/homepage.png" width="32%" alt="Homepage" />
-  <img src="docs/screenshots/paper-radar.png" width="32%" alt="Paper Radar" />
-  <img src="docs/screenshots/help-child.png" width="32%" alt="Help Child" />
+  <strong>Homepage</strong> — Chat entry, model selection
+</p>
+<p align="center">
+  <img src="docs/screenshots/homepage.png" width="80%" alt="Homepage" />
 </p>
 
-| Homepage | Paper Radar | Help Child |
-| :---: | :---: | :---: |
-| Chat entry, model selection | Discover & analyze arXiv, daily briefing | AI teaching assistant, curriculum |
+<p align="center">
+  <strong>Paper Radar</strong> — Discover & analyze arXiv, daily briefing
+</p>
+<p align="center">
+  <img src="docs/screenshots/paper-radar.png" width="80%" alt="Paper Radar" />
+</p>
+
+<p align="center">
+  <strong>Help Child</strong> — AI teaching assistant, curriculum
+</p>
+<p align="center">
+  <img src="docs/screenshots/help-child.png" width="80%" alt="Help Child" />
+</p>
 
 ## 1. Project Overview
 
